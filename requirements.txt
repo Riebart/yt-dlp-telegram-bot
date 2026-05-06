@@ -1,0 +1,11 @@
+python-telegram-bot
+dotenv
+yt-dlp
+ollama
+pytest
+pytest-mock
+pytest-cov
+pytest-asyncio
+freezegun
+pytest-html
+pytest-timeout
