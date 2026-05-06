@@ -2,7 +2,7 @@ import pytest
 import json
 import asyncio
 from unittest.mock import MagicMock, patch
-import bot2
+from bot.classifier import OllamaClassifier
 
 @pytest.mark.asyncio
 async def test_classifier_success(mock_classifier, mocker):

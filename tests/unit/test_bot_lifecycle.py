@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from bot2 import error_handler, main
+from bot.utils import error_handler
+from main import main
 
 @pytest.mark.asyncio
 async def test_error_handler():
@@ -11,12 +12,12 @@ async def test_error_handler():
     # Just ensure it executes without crashing
     await error_handler(update, context)
 
-@patch("bot2.ApplicationBuilder")
-@patch("bot2.Config")
-@patch("bot2.BotRouter")
-@patch("bot2.FFmpegProcessor")
-@patch("bot2.YtdlpDownloader")
-@patch("bot2.OllamaClassifier")
+@patch("main.ApplicationBuilder")
+@patch("main.Config")
+@patch("main.BotRouter")
+@patch("main.FFmpegProcessor")
+@patch("main.YtdlpDownloader")
+@patch("main.OllamaClassifier")
 def test_main_startup(
     mock_classifier, mock_downloader, mock_ffmpeg, mock_router, mock_config, mock_app_builder
 ):

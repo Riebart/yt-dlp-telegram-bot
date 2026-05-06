@@ -3,11 +3,12 @@ import asyncio
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-import bot2
+from bot.downloader import YtdlpDownloader, _YtdlpLogger
+from bot.state import CANCELLATIONS
 import yt_dlp
 
 def test_ytdlp_logger(caplog):
-    logger = bot2._YtdlpLogger()
+    logger = _YtdlpLogger()
     with caplog.at_level("INFO"):
         logger.debug("[download] working")
         logger.debug("other debug")
@@ -38,10 +39,10 @@ async def test_ytdlp_progress_hook(mock_downloader, mocker):
     bot.edit_message_text.assert_called()
 
     # Test cancellation
-    bot2.CANCELLATIONS.add(123)
+    CANCELLATIONS.add(123)
     with pytest.raises(Exception, match="Download cancelled"):
         hook({"status": "downloading"})
-    bot2.CANCELLATIONS.clear()
+    CANCELLATIONS.clear()
 
     # Test finished status
     hook({"status": "finished", "filename": "vid.mp4", "total_bytes": 1024*1024})
