@@ -5,7 +5,10 @@ import sys
 import signal
 import time
 import json
+import threading
+import queue
 from pathlib import Path
+from bot import state
 from bot.config import Config
 from bot.utils import terminate_process_group, track_process, untrack_process
 
@@ -63,7 +66,7 @@ class FFmpegProcessor:
                 capture_output=True, text=True, timeout=30,
             )
             bitrate_str = result.stdout.strip() if result.returncode == 0 else ""
-            
+
             if not bitrate_str:
                 result = subprocess.run(
                     [
@@ -149,7 +152,7 @@ class FFmpegProcessor:
         try:
             popen_kwargs = {
                 "stdout": subprocess.PIPE,
-                "stderr": subprocess.PIPE,
+                "stderr": subprocess.STDOUT,
                 "text": True,
             }
             if sys.platform == "win32":
@@ -165,41 +168,91 @@ class FFmpegProcessor:
 
         try:
             progress: dict[str, str] = {}
-            if proc.stdout:
-                for line in proc.stdout:
-                    from bot import state
-                    if chat_id and chat_id in state.CANCELLATIONS:
-                        self._log.info("[%s] Cancellation detected during compression for chat %d. Terminating process %d.",
-                                       input_path.name, chat_id, proc.pid)
-                        terminate_process_group(proc.pid)
-                        try:
-                            proc.wait(timeout=5)
-                            self._log.info("[%s] Process %d terminated successfully after cancellation.", input_path.name, proc.pid)
-                        except subprocess.TimeoutExpired:
-                            self._log.warning("[%s] Process %d did not terminate gracefully after 5s.", input_path.name, proc.pid)
-                        return False, None, "Process was cancelled by user."
 
-                    line = line.strip()
-                    if "=" in line:
-                        k, _, v = line.partition("=")
-                        progress[k.strip()] = v.strip()
-                    if line.startswith("progress="):
-                        try:
-                            out_us = int(progress.get("out_time_us", 0))
-                            pct = min(out_us / (duration * 1_000_000) * 100, 100.0)
-                            size_mib = int(progress.get("total_size", 0)) / 1_048_576
-                            speed = progress.get("speed", "?")
-                            self._log.info("  %5.1f%%  written=%.2f MiB  speed=%s",
-                                           pct, size_mib, speed)
+            # Use a queue and a thread to read stdout without blocking the main loop
+            out_queue = queue.Queue()
+            def reader():
+                try:
+                    # Use readline() instead of 'for line in proc.stdout' to avoid some Windows hang scenarios
+                    while True:
+                        line = proc.stdout.readline()
+                        if not line:
+                            break
+                        out_queue.put(line)
+                except Exception:
+                    pass
+                finally:
+                    out_queue.put(None)
 
-                            now = time.monotonic()
-                            if progress_callback and (now - last_callback_time >= 5.0):
-                                progress_callback(pct, size_mib, speed)
-                                last_callback_time = now
-                        except: pass
-                        progress = {}
+            reader_thread = threading.Thread(target=reader, daemon=True)
+            reader_thread.start()
 
-            proc.wait(timeout=1200)
+            # Buffer for error reporting (last 500 chars)
+            output_history = []
+
+            max_duration = 1200
+            start_time = time.monotonic()
+
+            while True:
+                # Use poll() instead of wait(timeout=0.1) to avoid potential Windows-specific blocking
+                if proc.poll() is not None:
+                    break
+
+                # Check overall timeout
+                if time.monotonic() - start_time > max_duration:
+                    self._log.error("[%s] Hard timeout reached (5m). Terminating process %d.", input_path.name, proc.pid)
+                    terminate_process_group(proc.pid)
+                    if proc.stdout: proc.stdout.close()
+                    return False, None, "Operation timed out."
+
+                # Check cancellation
+                if chat_id and chat_id in state.CANCELLATIONS:
+                    self._log.info("[%s] Cancellation detected during compression for chat %d. Terminating process %d.",
+                                   input_path.name, chat_id, proc.pid)
+                    terminate_process_group(proc.pid)
+                    if proc.stdout: proc.stdout.close()
+                    try:
+                        proc.wait(timeout=5)
+                        self._log.info("[%s] Process %d terminated successfully after cancellation.", input_path.name, proc.pid)
+                    except subprocess.TimeoutExpired:
+                        self._log.warning("[%s] Process %d did not terminate gracefully after 5s.", input_path.name, proc.pid)
+                    return False, None, "Process was cancelled by user."
+
+                # Drain queue and process lines
+                try:
+                    while True:
+                        line = out_queue.get_nowait()
+                        if line is None: break
+
+                        # Store in history for error reporting
+                        output_history.append(line)
+                        if len("".join(output_history)) > 2000:
+                            output_history.pop(0)
+
+                        line_stripped = line.strip()
+                        if "=" in line_stripped:
+                            k, _, v = line_stripped.partition("=")
+                            progress[k.strip()] = v.strip()
+                        if line_stripped.startswith("progress="):
+                            try:
+                                out_us = int(progress.get("out_time_us", 0))
+                                pct = min(out_us / (duration * 1_000_000) * 100, 100.0)
+                                size_mib = int(progress.get("total_size", 0)) / 1_048_576
+                                speed = progress.get("speed", "?")
+                                self._log.info("  %5.1f%%  written=%.2f MiB  speed=%s",
+                                               pct, size_mib, speed)
+
+                                now = time.monotonic()
+                                if progress_callback and (now - last_callback_time >= 5.0):
+                                    progress_callback(pct, size_mib, speed)
+                                    last_callback_time = now
+                            except: pass
+                            progress = {}
+                except queue.Empty:
+                    pass
+
+                time.sleep(0.1)
+
         finally:
             if chat_id:
                 untrack_process(chat_id, proc)
@@ -216,7 +269,7 @@ class FFmpegProcessor:
                                            output_path=output_path, progress_callback=progress_callback,
                                            chat_id=chat_id, depth=depth+1)
 
-            tail = proc.stderr.read()[-500:] if proc.stderr else "Unknown error"
+            tail = "".join(output_history)[-500:] if output_history else "Unknown error"
             return False, None, f"ffmpeg exited {proc.returncode}: {tail}"
 
         return True, out, ""
@@ -324,7 +377,8 @@ class LargeVideoSplitter:
             try:
                 popen_kwargs = {
                     "stdout": subprocess.PIPE,
-                    "stderr": subprocess.PIPE,
+                    "stderr": subprocess.STDOUT,
+                    "text": True,
                 }
                 if sys.platform == "win32":
                     popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -334,20 +388,61 @@ class LargeVideoSplitter:
                 proc = subprocess.Popen(cmd, **popen_kwargs)
                 if chat_id: track_process(chat_id, proc)
 
-                while proc.poll() is None:
-                    from bot import state
-                    if chat_id and chat_id in state.CANCELLATIONS:
-                        self._log.info("[%s] Cancellation detected during splitting for chat %d. Terminating process %d.",
-                                       input_path.name, chat_id, proc.pid)
-                        terminate_process_group(proc.pid)
+                out_queue = queue.Queue()
+                def reader():
+                    try:
+                        with proc.stdout:
+                            for line in proc.stdout:
+                                out_queue.put(line)
+                    except Exception:
+                        pass
+                    finally:
+                        out_queue.put(None)
+
+                reader_thread = threading.Thread(target=reader, daemon=True)
+                reader_thread.start()
+
+                stdout_buffer = []
+                max_duration = 1200
+                start_time = time.monotonic()
+
+                while True:
+                    try:
+                        # Use wait with a small timeout to avoid busy-waiting and check status
+                        proc.wait(timeout=0.1)
+                        break # Process finished naturally
+                    except subprocess.TimeoutExpired:
+                        # Process still running, check overall timeout
+                        if time.monotonic() - start_time > max_duration:
+                            self._log.error("[%s] Hard timeout reached (5m). Terminating process %d.", input_path.name, proc.pid)
+                            terminate_process_group(proc.pid)
+                            if proc.stdout: proc.stdout.close()
+                            if chat_id: untrack_process(chat_id, proc)
+                            return [], "Operation timed out."
+
+                        # Drain pipe to prevent deadlock
                         try:
-                            proc.wait(timeout=5)
-                            self._log.info("[%s] Process %d terminated successfully after cancellation.", input_path.name, proc.pid)
-                        except subprocess.TimeoutExpired:
-                            self._log.warning("[%s] Process %d did not terminate gracefully after 5s.", input_path.name, proc.pid)
-                        if chat_id: untrack_process(chat_id, proc)
-                        return [], "Process was cancelled by user."
-                    time.sleep(0.5)
+                            while True:
+                                line = out_queue.get_nowait()
+                                if line is None: break
+                                print(f"[FFmpeg Split] {line.strip()}", flush=True)
+                                stdout_buffer.append(line)
+                        except queue.Empty:
+                            pass
+
+                        if chat_id and chat_id in state.CANCELLATIONS:
+                            self._log.info("[%s] Cancellation detected during splitting for chat %d. Terminating process %d.",
+                                           input_path.name, chat_id, proc.pid)
+                            terminate_process_group(proc.pid)
+                            if proc.stdout: proc.stdout.close()
+                            try:
+                                proc.wait(timeout=5)
+                                self._log.info("[%s] Process %d terminated successfully after cancellation.", input_path.name, proc.pid)
+                            except subprocess.TimeoutExpired:
+                                self._log.warning("[%s] Process %d did not terminate gracefully after 5s.", input_path.name, proc.pid)
+                            if chat_id: untrack_process(chat_id, proc)
+                            return [], "Process was cancelled by user."
+
 
                 if chat_id: untrack_process(chat_id, proc)
 
@@ -356,10 +451,11 @@ class LargeVideoSplitter:
                 elif proc.returncode != 0:
                     if proc.returncode == -signal.SIGTERM or (sys.platform == "win32" and proc.returncode == 1):
                          return [], "Process was cancelled by user."
-                    return [], f"FFmpeg failed at part {i+1}"
+
+                    err_msg = "".join(stdout_buffer)[-500:]
+                    return [], f"FFmpeg failed at part {i+1}: {err_msg}"
             except Exception as e:
                 return [], str(e)
-
         manifest_path = input_path.parent / f"{input_path.stem}_split_manifest.json"
         self._generate_manifest(manifest_path, chunks, input_path)
         self._chunks = chunks

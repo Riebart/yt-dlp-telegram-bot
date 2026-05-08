@@ -16,17 +16,21 @@ class _YtdlpLogger:
     def debug(self, msg: str) -> None:
         if msg.startswith("[download]") or msg.startswith("[ffmpeg]"):
             self._log.info(msg)
+            print(f"[yt-dlp DEBUG] {msg}")
         else:
             self._log.debug(msg)
 
     def info(self, msg: str) -> None:
         self._log.info(msg)
+        print(f"[yt-dlp INFO] {msg}")
 
     def warning(self, msg: str) -> None:
         self._log.warning(msg)
+        print(f"[yt-dlp WARNING] {msg}")
 
     def error(self, msg: str) -> None:
         self._log.error(msg)
+        print(f"[yt-dlp ERROR] {msg}")
 
 class YtdlpDownloader:
     """Downloads media via the yt-dlp Python API with 5-second progress logging."""

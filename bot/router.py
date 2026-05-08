@@ -48,7 +48,7 @@ class BotRouter:
         )
 
         # Clear any stale cancellation flags for this chat before processing a new request
-        CANCELLATIONS.discard(chat_id)
+        CANCELLATIONS.clear()
 
         # Auth
         if self._cfg.allowed_chat_ids and chat_id not in self._cfg.allowed_chat_ids:
@@ -64,11 +64,19 @@ class BotRouter:
             f"🧠 Classifying…  (`{self._cfg.ollama_model}`)",
             parse_mode="Markdown",
         )
+        # Ensure it's fully awaited before moving on
+        await asyncio.sleep(0)
 
         self._log.info("Classifying  model=%s", self._cfg.ollama_model)
-        intent, decline_reply = await self._classifier.classify(
-            text, self._cfg.ollama_timeout
-        )
+        try:
+            intent, decline_reply = await self._classifier.classify(
+                text, self._cfg.ollama_timeout
+            )
+        except Exception as e:
+            self._log.exception("Classifier crash: %s", e)
+            await status_msg.edit_text("❌ Sorry, I encountered an error while classifying your request.")
+            return
+
         self._log.info("Intent=%r", intent)
 
         await status_msg.edit_text(

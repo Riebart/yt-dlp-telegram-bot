@@ -1,0 +1,20 @@
+{
+  "original_file": "tmp\\test_video_compressed_compressed.mp4",
+  "original_size_bytes": 3222523,
+  "total_size_bytes": 3259599,
+  "total_duration_seconds": 10.026,
+  "split_into": 2,
+  "chunks": [
+    {
+      "file": "test_video_compressed_compressed_part001.mp4",
+      "size_bytes": 2011634,
+      "size_mb": 1.9184436798095703
+    },
+    {
+      "file": "test_video_compressed_compressed_part002.mp4",
+      "size_bytes": 1247965,
+      "size_mb": 1.1901521682739258
+    }
+  ],
+  "created_at": "2026-05-07T12:49:37Z"
+}

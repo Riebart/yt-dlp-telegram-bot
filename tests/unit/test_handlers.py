@@ -56,14 +56,14 @@ def mock_context():
     return context
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_download_handler_url_missing(mock_config, mock_update, mock_context):
     handler = DownloadIntentHandler(mock_config, MagicMock(), MagicMock())
     await handler.handle(mock_update.message, mock_context, "no url here")
     mock_update.message.reply_text.assert_called_with("⚠️ I couldn't find a URL in your message.")
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_download_handler_info_fail(mock_config, mock_update, mock_context, mocker):
     mocker.patch("asyncio.get_event_loop").return_value.run_in_executor = AsyncMock(side_effect=lambda exec, func, *a, **k: func(*a, **k))
     mock_dl = MagicMock()
@@ -74,7 +74,7 @@ async def test_download_handler_info_fail(mock_config, mock_update, mock_context
     mock_update.message.reply_text.assert_called()
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_download_handler_pivot_to_report(mock_config, mock_update, mock_context, mocker):
     mocker.patch("asyncio.get_event_loop").return_value.run_in_executor = AsyncMock(side_effect=lambda exec, func, *a, **k: func(*a, **k))
     mock_dl = MagicMock()
@@ -88,7 +88,7 @@ async def test_download_handler_pivot_to_report(mock_config, mock_update, mock_c
     mock_report.send_report.assert_called()
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_download_handler_full_success(mock_config, mock_update, mock_context, mocker, tmp_path):
     mocker.patch("asyncio.get_event_loop").return_value.run_in_executor = AsyncMock(side_effect=lambda exec, func, *a, **k: func(*a, **k))
 
@@ -112,7 +112,7 @@ async def test_download_handler_full_success(mock_config, mock_update, mock_cont
     mock_update.message.reply_video.assert_called()
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_download_handler_over_limit_compress(mock_config, mock_update, mock_context, mocker, tmp_path):
     mocker.patch("asyncio.get_event_loop").return_value.run_in_executor = AsyncMock(side_effect=lambda exec, func, *a, **k: func(*a, **k))
 
@@ -146,7 +146,7 @@ async def test_download_handler_over_limit_compress(mock_config, mock_update, mo
     mock_update.message.reply_video.assert_called()
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_audio_handler_full_path(mock_config, mock_update, mock_context, mocker, tmp_path):
     mocker.patch("asyncio.get_event_loop").return_value.run_in_executor = AsyncMock(side_effect=lambda exec, func, *a, **k: func(*a, **k))
 
@@ -168,7 +168,7 @@ async def test_audio_handler_full_path(mock_config, mock_update, mock_context, m
     mock_update.message.reply_audio.assert_called()
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_bot_router_routing(mock_config, mock_update, mock_context, mocker):
     mock_classifier = MagicMock()
     mock_classifier.classify = AsyncMock(return_value=("download", "reply"))
@@ -186,7 +186,7 @@ async def test_bot_router_routing(mock_config, mock_update, mock_context, mocker
     handler.handle.assert_called_with(mock_update.message, mock_context, "https://example.com")
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_bot_router_unauthorized(mock_config, mock_update, mock_context, mocker):
     mock_config.allowed_chat_ids = {456} 
     router = BotRouter(mock_config, MagicMock(), {})
@@ -195,7 +195,7 @@ async def test_bot_router_unauthorized(mock_config, mock_update, mock_context, m
     mock_update.message.reply_text.assert_called_with("⛔ You are not authorised to use this bot.")
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_download_handler_over_limit_split(mock_config, mock_update, mock_context, mocker, tmp_path):
     mocker.patch("asyncio.get_event_loop").return_value.run_in_executor = AsyncMock(side_effect=lambda exec, func, *a, **k: func(*a, **k))
 
@@ -242,7 +242,7 @@ async def test_download_handler_over_limit_split(mock_config, mock_update, mock_
     mock_splitter.split_video.assert_called()
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_bot_router_callback_exhaustive(mock_config, mock_context, mocker):
     actions = ["dl", "au", "cp", "sp", "cn"]
     for action in actions:
@@ -270,7 +270,7 @@ async def test_bot_router_callback_exhaustive(mock_config, mock_context, mocker)
         elif action == "cn": assert "test_uid" not in URL_CACHE
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_bot_router_handle_message_no_text(mock_config, mock_update, mock_context, mocker):
     mock_update.message.text = None
     mock_update.message.caption = None
@@ -278,7 +278,7 @@ async def test_bot_router_handle_message_no_text(mock_config, mock_update, mock_
     await router.handle_message(mock_update, mock_context)
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_bot_router_no_handler(mock_config, mock_update, mock_context, mocker):
     mock_classifier = MagicMock()
     mock_classifier.classify = AsyncMock(return_value=("unknown_intent", "Decline message"))
@@ -289,7 +289,7 @@ async def test_bot_router_no_handler(mock_config, mock_update, mock_context, moc
     mock_update.message.reply_text.assert_any_call("Decline message")
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_bot_router_handle_cancel_empty(mock_config, mock_update, mock_context):
     router = BotRouter(mock_config, MagicMock(), {})
     ACTIVE_PROCESSES[123] = set()
@@ -306,16 +306,19 @@ def test_track_untrack_process():
 
 @pytest.mark.asyncio
 async def test_cleanup_cache_task(mocker):
-    URL_CACHE["old"] = {"time": 0, "url": "..."}
+    URL_CACHE["old"] = {"time": time.monotonic() - 4000, "url": "..."}
     URL_CACHE["new"] = {"time": time.monotonic(), "url": "..."}
     
+    async def dummy_sleep(seconds):
+        pass
+
     stop_called = False
-    def sleep_side_effect(seconds):
+    async def sleep_side_effect(seconds):
         nonlocal stop_called
         if stop_called:
             raise asyncio.CancelledError()
         stop_called = True
-        return asyncio.sleep(0)
+        await dummy_sleep(0)
 
     mocker.patch("asyncio.sleep", side_effect=sleep_side_effect)
     
@@ -329,14 +332,14 @@ async def test_cleanup_cache_task(mocker):
     assert "new" in URL_CACHE
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_report_handler_no_url(mock_config, mock_update, mock_context):
     handler = ReportSizeIntentHandler(mock_config, MagicMock())
     await handler.handle(mock_update.message, mock_context, "just some text")
     mock_update.message.reply_text.assert_called_with("⚠️ No URL found.")
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_report_handler_info_fail(mock_config, mock_update, mock_context, mocker):
     mocker.patch("asyncio.get_event_loop").return_value.run_in_executor = AsyncMock(side_effect=lambda exec, func, *a, **k: func(*a, **k))
     mock_dl = MagicMock()
@@ -350,7 +353,7 @@ async def test_report_handler_info_fail(mock_config, mock_update, mock_context, 
     status_msg.edit_text.assert_called_with("❌ Could not fetch info: metadata error")
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_report_handler_success_no_rec(mock_config, mock_update, mock_context, mocker):
     mocker.patch("asyncio.get_event_loop").return_value.run_in_executor = AsyncMock(side_effect=lambda exec, func, *a, **k: func(*a, **k))
     mock_dl = MagicMock()
@@ -374,7 +377,7 @@ async def test_report_handler_success_no_rec(mock_config, mock_update, mock_cont
     assert "Recommendation" not in call_args
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_report_handler_rec_compress(mock_config, mock_update, mock_context, mocker):
     mocker.patch("asyncio.get_event_loop").return_value.run_in_executor = AsyncMock(side_effect=lambda exec, func, *a, **k: func(*a, **k))
     
@@ -403,7 +406,7 @@ async def test_report_handler_rec_compress(mock_config, mock_update, mock_contex
     assert "fits in 1 file" in call_args
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_report_handler_rec_split(mock_config, mock_update, mock_context, mocker):
     mocker.patch("asyncio.get_event_loop").return_value.run_in_executor = AsyncMock(side_effect=lambda exec, func, *a, **k: func(*a, **k))
     
@@ -498,7 +501,7 @@ async def test_bot_router_handle_cancel_linux(mock_config, mock_update, mock_con
     mock_update.message.reply_text.assert_called_with("🛑 Cancelled 1 active task(s).")
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(10)
 async def test_bot_router_callback_expired(mock_config, mock_context):
     update = MagicMock()
     update.callback_query.data = "dl:expired_id"

@@ -3,7 +3,9 @@
     "allow": [
       "WebFetch(domain:github.com)",
       "Bash(python -m py_compile /mnt/c/Users/Michael/OneDrive/Projects/yt-dlp-telegram-bot/bot2.py)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(python -m pytest tests/unit/ --cov=bot --cov-report=term-missing --cov-report=html --cov-fail-under=0)"
     ]
-  }
+  },
+  "prefersReducedMotion": false
 }

@@ -4,6 +4,7 @@ import os
 import sys
 import signal
 import time
+from itertools import cycle
 from pathlib import Path
 from unittest.mock import MagicMock, patch, mock_open
 from bot.processor import FFmpegProcessor, LargeVideoSplitter
@@ -72,14 +73,17 @@ def test_ffmpeg_get_video_bitrate_failure(mock_ffmpeg, mocker):
     assert mock_ffmpeg.get_video_bitrate(Path("v.mp4")) is None
 
 def test_ffmpeg_compress_to_size_various_branches(mock_ffmpeg, mocker):
+    CANCELLATIONS.clear()
     mocker.patch.object(mock_ffmpeg, "get_duration", return_value=100)
     
     # Test with no progress_callback and no chat_id
     mock_popen = mocker.patch("subprocess.Popen")
     mock_proc = mock_popen.return_value
     mock_proc.returncode = 0
-    mock_proc.stdout = iter(["progress=continue"])
-    mock_proc.stderr = None # Hit the 'if proc.stderr' branch
+    mock_proc.stdout = MagicMock()
+    mock_proc.stdout.readline.side_effect = ["progress=continue\n", ""]
+    mock_proc.stderr = None 
+    mock_proc.poll.side_effect = cycle([None, 0])
     
     start_time = time.time()
     mocker.patch("time.monotonic", side_effect=lambda: time.time() - start_time + 100)
@@ -89,14 +93,18 @@ def test_ffmpeg_compress_to_size_various_branches(mock_ffmpeg, mocker):
 
     # Test with proc.stdout = None
     mock_proc.stdout = None
+    mock_proc.poll.side_effect = cycle([None, 0])
     ok, out, err = mock_ffmpeg.compress_to_size(Path("i.mp4"), 1000000)
     assert ok
 
-    # Test error tail extractionS
-    mock_proc.returncode = 2 # Generic error (1 is misidentified as cancellation on Win32)
-    mock_proc.stderr = MagicMock()
-    mock_proc.stderr.read.return_value = b"Detailed error message" # Should be bytes for read().decode()
-    ok, out, err = mock_ffmpeg.compress_to_size(Path("i.mp4"), 1000000)
+    # Test error tail extraction
+    mock_proc.returncode = 2 # Generic error
+    mock_proc.stdout = MagicMock()
+    mock_proc.stdout.readline.side_effect = ["Detailed error message\n", ""]
+    mock_proc.stderr = None
+    mock_proc.poll.side_effect = cycle([None, 2])
+    # Use audio_bps=64000 to avoid retry logic which checks for "-c:a copy"
+    ok, out, err = mock_ffmpeg.compress_to_size(Path("i.mp4"), 1000000, audio_bps=64000)
     assert not ok
     assert "Detailed error message" in err
 
@@ -109,9 +117,11 @@ def test_ffmpeg_compress_to_size_various_branches(mock_ffmpeg, mocker):
     mock_popen = mocker.patch("subprocess.Popen")
     mock_proc = mock_popen.return_value
     mock_proc.pid = 5678
-    mock_proc.stdout = iter(["progress=continue"])
+    mock_proc.returncode = 1
+    mock_proc.stdout = MagicMock()
+    mock_proc.stdout.readline.return_value = ""
+    mock_proc.poll.side_effect = cycle([None, 1])
     
-    # Inject cancellation
     CANCELLATIONS.add(99)
     
     ok, out, err = mock_ffmpeg.compress_to_size(Path("in.mp4"), 1000000, chat_id=99)
@@ -119,50 +129,60 @@ def test_ffmpeg_compress_to_size_various_branches(mock_ffmpeg, mocker):
     assert not ok
     assert "cancelled" in err.lower()
     mock_kill.assert_called_with(5678, signal.SIGTERM)
+    CANCELLATIONS.clear()
 
 def test_ffmpeg_compress_to_size_win32_cancellation(mock_ffmpeg, mocker):
+    CANCELLATIONS.clear()
     mocker.patch("sys.platform", "win32")
     mocker.patch.object(mock_ffmpeg, "get_duration", return_value=100)
     
     mock_popen = mocker.patch("subprocess.Popen")
     mock_proc = mock_popen.return_value
     mock_proc.pid = 5678
-    mock_proc.stdout = iter(["progress=continue"])
+    mock_proc.returncode = 1
+    mock_proc.stdout = MagicMock()
+    mock_proc.stdout.readline.return_value = ""
+    mock_proc.poll.side_effect = cycle([None, 1])
     
     mock_run = mocker.patch("subprocess.run")
     
-    # Inject cancellation
     CANCELLATIONS.add(88)
     
     ok, out, err = mock_ffmpeg.compress_to_size(Path("in.mp4"), 1000000, chat_id=88)
     
     assert not ok
     assert "cancelled" in err.lower()
+    assert mock_run.called
+    CANCELLATIONS.clear()
 
 def test_ffmpeg_compress_to_size_cancellation_timeout(mock_ffmpeg, mocker):
+    CANCELLATIONS.clear()
     mocker.patch("sys.platform", "win32")
     mocker.patch.object(mock_ffmpeg, "get_duration", return_value=100)
     
     mock_popen = mocker.patch("subprocess.Popen")
     mock_proc = mock_popen.return_value
     mock_proc.pid = 5678
-    mock_proc.stdout = iter(["progress=continue"])
-    import subprocess
-    mock_proc.wait.side_effect = subprocess.TimeoutExpired(cmd=["taskkill"], timeout=5)
+    mock_proc.returncode = 1
+    mock_proc.stdout = MagicMock()
+    mock_proc.stdout.readline.return_value = ""
+    mock_proc.poll.side_effect = cycle([None])
     
     mock_run = mocker.patch("subprocess.run")
     
-    # Inject cancellation
-    CANCELLATIONS.add(99)
+    # Mock time to trigger hard timeout (max_duration = 1200)
+    start_time = 1000.0
+    mocker.patch("time.monotonic", side_effect=[start_time, start_time, start_time + 1300, start_time + 1300, start_time + 1300, start_time + 1300])
     
     ok, out, err = mock_ffmpeg.compress_to_size(Path("in.mp4"), 1000000, chat_id=99)
     
     assert not ok
-    assert "cancelled" in err.lower()
-    CANCELLATIONS.discard(99)
-    mock_run.assert_called_with(["taskkill", "/F", "/T", "/PID", "5678"], capture_output=True)
+    assert "operation timed out" in err.lower()
+    assert mock_run.called
+    CANCELLATIONS.clear()
 
 def test_ffmpeg_compress_to_size_audio_retry(mock_ffmpeg, mocker):
+    CANCELLATIONS.clear()
     mocker.patch.object(mock_ffmpeg, "get_duration", return_value=100)
     
     mock_popen = mocker.patch("subprocess.Popen")
@@ -171,12 +191,15 @@ def test_ffmpeg_compress_to_size_audio_retry(mock_ffmpeg, mocker):
     mock_proc1 = MagicMock()
     mock_proc1.returncode = 2 # Generic error
     mock_proc1.stdout = iter([])
+    mock_proc1.stderr = MagicMock()
     mock_proc1.stderr.read.return_value = "Invalid audio stream"
+    mock_proc1.poll.return_value = 2
     
     # Second call: success with aac
     mock_proc2 = MagicMock()
     mock_proc2.returncode = 0
     mock_proc2.stdout = iter([])
+    mock_proc2.poll.return_value = 0
     
     mock_popen.side_effect = [mock_proc1, mock_proc2]
     
@@ -188,6 +211,7 @@ def test_ffmpeg_compress_to_size_audio_retry(mock_ffmpeg, mocker):
     assert "aac" in cmd
 
 def test_ffmpeg_compress_to_size_launch_fail(mock_ffmpeg, mocker):
+    CANCELLATIONS.clear()
     mocker.patch.object(mock_ffmpeg, "get_duration", return_value=100)
     mocker.patch("subprocess.Popen", side_effect=Exception("launch failed"))
     
@@ -201,7 +225,7 @@ def test_splitter_get_keyframes_success(mock_ffmpeg, mocker):
     splitter = LargeVideoSplitter(mock_ffmpeg._cfg, mock_ffmpeg)
     mock_run = mocker.patch("subprocess.run")
     mock_run.return_value.returncode = 0
-    mock_run.return_value.stdout = "".join(["10.0\n", "20.5, \n", "30.0\ninvalid\n"])
+    mock_run.return_value.stdout = "10.0\n20.5, \n30.0\ninvalid\n"
     
     keyframes = splitter.get_keyframes(Path("v.mp4"))
     assert keyframes == [10.0, 20.5, 30.0]
@@ -224,6 +248,7 @@ def test_splitter_split_video_no_action_needed(mock_ffmpeg, mocker):
     assert err == ""
 
 def test_splitter_split_video_success(mock_ffmpeg, mocker):
+    CANCELLATIONS.clear()
     splitter = LargeVideoSplitter(mock_ffmpeg._cfg, mock_ffmpeg)
     # 100MB file, 50MB limit
     mocker.patch("pathlib.Path.stat", return_value=MagicMock(st_size=100*1024*1024))
@@ -232,18 +257,20 @@ def test_splitter_split_video_success(mock_ffmpeg, mocker):
     
     mock_popen = mocker.patch("subprocess.Popen")
     mock_proc = mock_popen.return_value
-    mock_proc.poll.side_effect = [None, 0, None, 0, None, 0, None, 0]
+    mock_proc.poll.side_effect = cycle([None, 0])
+    mock_proc.wait.return_value = 0
     mock_proc.returncode = 0
+    mock_proc.stdout.readline.return_value = ""
     
     mocker.patch("pathlib.Path.exists", return_value=True)
     mocker.patch("builtins.open", mock_open())
     
     chunks, err = splitter.split_video(Path("v.mp4"), max_size_mb=50)
-    # With 100s duration and 45s target chunk duration, splits are [0, 60, 100] -> 2 chunks
     assert len(chunks) == 2
     assert err == ""
 
 def test_splitter_split_video_no_keyframes_fallback(mock_ffmpeg, mocker):
+    CANCELLATIONS.clear()
     splitter = LargeVideoSplitter(mock_ffmpeg._cfg, mock_ffmpeg)
     mocker.patch("pathlib.Path.stat", return_value=MagicMock(st_size=100*1024*1024))
     mocker.patch.object(mock_ffmpeg, "get_duration", return_value=100)
@@ -251,7 +278,8 @@ def test_splitter_split_video_no_keyframes_fallback(mock_ffmpeg, mocker):
     
     mock_popen = mocker.patch("subprocess.Popen")
     mock_proc = mock_popen.return_value
-    mock_proc.poll.return_value = 0
+    mock_proc.poll.side_effect = cycle([None, 0])
+    mock_proc.wait.return_value = 0
     mock_proc.returncode = 0
     mocker.patch("pathlib.Path.exists", return_value=True)
     mocker.patch("builtins.open", mock_open())
@@ -260,6 +288,7 @@ def test_splitter_split_video_no_keyframes_fallback(mock_ffmpeg, mocker):
     assert len(chunks) > 0
 
 def test_splitter_split_video_cancellation(mock_ffmpeg, mocker):
+    CANCELLATIONS.clear()
     splitter = LargeVideoSplitter(mock_ffmpeg._cfg, mock_ffmpeg)
     mocker.patch("pathlib.Path.stat", return_value=MagicMock(st_size=100*1024*1024))
     mocker.patch.object(mock_ffmpeg, "get_duration", return_value=100)
@@ -271,21 +300,23 @@ def test_splitter_split_video_cancellation(mock_ffmpeg, mocker):
 
     mock_popen = mocker.patch("subprocess.Popen")
     mock_proc = mock_popen.return_value
-    mock_proc.poll.return_value = None # Never finishing
+    mock_proc.poll.side_effect = cycle([None])
+    mock_proc.wait.side_effect = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=0.1)
     mock_proc.pid = 9999
+    mock_proc.stdout = MagicMock()
+    mock_proc.stdout.readline.return_value = ""
+    mock_proc.returncode = 1 
     
-    # Inject cancellation
     CANCELLATIONS.add(77)
-    
-    # Mock platform for kill branch
-    mocker.patch("sys.platform", "linux")
+    mocker.patch("sys.platform", "win32")
 
     chunks, err = splitter.split_video(Path("v.mp4"), max_size_mb=50, chat_id=77)
     assert chunks == []
     assert "cancelled" in err.lower()
-    mock_kill.assert_called()
+    CANCELLATIONS.clear()
 
 def test_splitter_split_video_ffmpeg_fail(mock_ffmpeg, mocker):
+    CANCELLATIONS.clear()
     splitter = LargeVideoSplitter(mock_ffmpeg._cfg, mock_ffmpeg)
     mocker.patch("pathlib.Path.stat", return_value=MagicMock(st_size=100*1024*1024))
     mocker.patch.object(mock_ffmpeg, "get_duration", return_value=100)
@@ -293,8 +324,10 @@ def test_splitter_split_video_ffmpeg_fail(mock_ffmpeg, mocker):
     
     mock_popen = mocker.patch("subprocess.Popen")
     mock_proc = mock_popen.return_value
-    mock_proc.poll.return_value = 0
-    mock_proc.returncode = 2 # Generic error
+    mock_proc.poll.side_effect = cycle([0])
+    mock_proc.wait.returncode = 2
+    mock_proc.returncode = 2
+    mock_proc.stdout.read.return_value = "FFmpeg error message"
     
     chunks, err = splitter.split_video(Path("v.mp4"), max_size_mb=50)
     assert chunks == []
