@@ -20,8 +20,8 @@ class Config:
         self.max_size_mb: float = float(os.environ.get("MAX_SIZE_MB", "50"))
         self.compress_mb: float = float(os.environ.get("COMPRESS_MB", "40"))
         self.min_video_bitrate_kbps: int = int(os.environ.get("MIN_VIDEO_BITRATE_KBPS", "250"))
-        self.video_bitrate_kbps: int = int(os.environ.get("VIDEO_BITRATE_KBPS", "2000"))
         self.audio_bps: int = int(os.environ.get("AUDIO_BPS", "128000"))
+
         self.preflight_duration_min: int = int(os.environ.get("PREFLIGHT_DURATION_MIN", "30"))
         self.ffmpeg_location: str | None = os.environ.get("FFMPEG_LOCATION")
         self.save_dir: str | None = os.environ.get("SAVE_DIR")

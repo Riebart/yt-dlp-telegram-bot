@@ -24,7 +24,6 @@ def test_config_defaults(monkeypatch):
     assert cfg.max_size_mb == 50
     assert cfg.compress_mb == 40
     assert cfg.audio_bps == 128000
-    assert cfg.video_bitrate_kbps == 2000
     assert cfg.min_video_bitrate_kbps == 250
     assert cfg.preflight_duration_min == 30
     assert cfg.download_timeout == 3600
@@ -44,7 +43,6 @@ def test_config_custom_values(monkeypatch):
     monkeypatch.setenv("MAX_SIZE_MB", "100")
     monkeypatch.setenv("COMPRESS_MB", "90")
     monkeypatch.setenv("AUDIO_BPS", "128000")
-    monkeypatch.setenv("VIDEO_BITRATE_KBPS", "3000")
     monkeypatch.setenv("MIN_VIDEO_BITRATE_KBPS", "500")
     monkeypatch.setenv("PREFLIGHT_DURATION_MIN", "15")
     monkeypatch.setenv("DOWNLOAD_TIMEOUT", "600")
@@ -62,7 +60,6 @@ def test_config_custom_values(monkeypatch):
     assert cfg.max_size_mb == 100
     assert cfg.compress_mb == 90
     assert cfg.audio_bps == 128000
-    assert cfg.video_bitrate_kbps == 3000
     assert cfg.min_video_bitrate_kbps == 500
     assert cfg.preflight_duration_min == 15
     assert cfg.download_timeout == 600

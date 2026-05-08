@@ -86,7 +86,7 @@ async def error_handler(update: Any, context: Any) -> None:
 
 async def start_ollama_relay():
     """Start the Ollama Unix-to-TCP relay if configured."""
-    socket_path = os.environ.get("OLLAMA_UNIX_SOCKET")
+    socket_path = os.environ.get("OLLAMA_UNIX_SOCK")
     if not socket_path:
         return None
     

@@ -48,7 +48,7 @@ class BotRouter:
         )
 
         # Clear any stale cancellation flags for this chat before processing a new request
-        CANCELLATIONS.clear()
+        CANCELLATIONS.discard(chat_id)
 
         # Auth
         if self._cfg.allowed_chat_ids and chat_id not in self._cfg.allowed_chat_ids:
@@ -117,6 +117,9 @@ class BotRouter:
                 self._log.info("Successfully sent kill signal to process %d", proc.pid)
             except Exception as e:
                 self._log.error("Error killing process %d for chat %d: %s", proc.pid, chat_id, e)
+
+        # Clean up ACTIVE_PROCESSES state
+        ACTIVE_PROCESSES.pop(chat_id, None)
 
         if count > 0 or chat_id in CANCELLATIONS:
             await message.reply_text(f"🛑 Cancelled {count} active task(s).")
