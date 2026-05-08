@@ -53,7 +53,14 @@ def local_server(tmp_path_factory):
     yield local_url
     
     # 4. Cleanup: Terminate the server
-    subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+    if sys.platform == "win32":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+    else:
+        # On Unix, kill the process group
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except Exception:
+            proc.terminate()
 
 @pytest.fixture
 def e2e_config():

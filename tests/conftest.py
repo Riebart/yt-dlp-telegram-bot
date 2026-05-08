@@ -14,10 +14,25 @@ from bot.state import URL_CACHE, ACTIVE_PROCESSES, CANCELLATIONS
 
 @pytest.fixture(autouse=True)
 def reset_global_state():
-    """Reset global variables in bot before each test."""
+    """Reset global variables and cleanup leftover files in bot before each test."""
     URL_CACHE.clear()
     ACTIVE_PROCESSES.clear()
     CANCELLATIONS.clear()
+    
+    # Filesystem cleanup of project root and tmp folder
+    for folder in [".", "tmp"]:
+        if not os.path.exists(folder):
+            continue
+        for file in os.listdir(folder):
+            if file.endswith((".mp4", ".mp3", ".json", ".txt")):
+                # Do not delete important project files
+                if file in ("requirements.txt", "NOTES.txt", "env.example"):
+                    continue
+                try:
+                    os.remove(os.path.join(folder, file))
+                except Exception:
+                    pass
+
     yield
     URL_CACHE.clear()
     ACTIVE_PROCESSES.clear()

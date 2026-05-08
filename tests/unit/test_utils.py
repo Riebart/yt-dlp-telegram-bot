@@ -37,8 +37,10 @@ async def test_unix_to_tcp_relay_fail(mocker):
         pytest.skip("open_unix_connection only available on POSIX")
     
     mocker.patch("asyncio.open_unix_connection", side_effect=Exception("conn fail"))
+    mock_reader = AsyncMock()
+    mock_reader.read.return_value = b"" # EOF to prevent infinite loop
     mock_writer = AsyncMock()
     
     from bot.utils import _unix_to_tcp_relay
-    await _unix_to_tcp_relay(AsyncMock(), mock_writer)
+    await _unix_to_tcp_relay(mock_reader, mock_writer)
     mock_writer.close.assert_called()

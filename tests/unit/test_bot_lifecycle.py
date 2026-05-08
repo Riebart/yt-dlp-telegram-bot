@@ -18,8 +18,9 @@ async def test_error_handler():
 @patch("main.FFmpegProcessor")
 @patch("main.YtdlpDownloader")
 @patch("main.OllamaClassifier")
+@patch("asyncio.ensure_future")
 def test_main_startup(
-    mock_classifier, mock_downloader, mock_ffmpeg, mock_router, mock_config, mock_app_builder
+    mock_ensure_future, mock_classifier, mock_downloader, mock_ffmpeg, mock_router, mock_config, mock_app_builder
 ):
     # Setup
     mock_app = MagicMock()

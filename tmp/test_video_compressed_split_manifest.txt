@@ -1,2 +1,0 @@
-file 'test_video_compressed_part001.mp4'
-file 'test_video_compressed_part002.mp4'

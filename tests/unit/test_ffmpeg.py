@@ -134,6 +134,8 @@ def test_ffmpeg_compress_to_size_various_branches(mock_ffmpeg, mocker):
 def test_ffmpeg_compress_to_size_win32_cancellation(mock_ffmpeg, mocker):
     CANCELLATIONS.clear()
     mocker.patch("sys.platform", "win32")
+    # Mock Windows-only constant
+    mocker.patch("subprocess.CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True)
     mocker.patch.object(mock_ffmpeg, "get_duration", return_value=100)
     
     mock_popen = mocker.patch("subprocess.Popen")
@@ -158,6 +160,7 @@ def test_ffmpeg_compress_to_size_win32_cancellation(mock_ffmpeg, mocker):
 def test_ffmpeg_compress_to_size_cancellation_timeout(mock_ffmpeg, mocker):
     CANCELLATIONS.clear()
     mocker.patch("sys.platform", "win32")
+    mocker.patch("subprocess.CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True)
     mocker.patch.object(mock_ffmpeg, "get_duration", return_value=100)
     
     mock_popen = mocker.patch("subprocess.Popen")
@@ -309,6 +312,7 @@ def test_splitter_split_video_cancellation(mock_ffmpeg, mocker):
     
     CANCELLATIONS.add(77)
     mocker.patch("sys.platform", "win32")
+    mocker.patch("subprocess.CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True)
 
     chunks, err = splitter.split_video(Path("v.mp4"), max_size_mb=50, chat_id=77)
     assert chunks == []

@@ -34,8 +34,10 @@ RUN python3 -m venv /app/venv \
     && /app/venv/bin/pip install --no-cache-dir --upgrade pip \
     && /app/venv/bin/pip install --no-cache-dir -r requirements.txt
 
-COPY bot.py .
+COPY main.py .
+COPY bot/ ./bot/
 COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
 
 # Drop privileges -- never run a long-lived bot as root.
 RUN useradd --no-create-home --shell /bin/false botuser \

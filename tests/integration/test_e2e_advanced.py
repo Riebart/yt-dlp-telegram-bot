@@ -113,7 +113,7 @@ async def test_e2e_cancel_download(e2e_router, e2e_config, mock_update, mock_con
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(45)
-async def test_e2e_cancel_compress(e2e_router, e2e_config, mock_update, mock_context, mocker, local_server):
+async def test_e2e_cancel_compress(e2e_router, e2e_config, mock_update, mock_context, temp_workspace, mocker, local_server):
     """Test cancellation during the compression phase."""
     messages = []
     original_side_effect = mock_update.message.reply_text.side_effect
@@ -125,7 +125,7 @@ async def test_e2e_cancel_compress(e2e_router, e2e_config, mock_update, mock_con
 
     mock_update.message.reply_text.side_effect = collecting_side_effect
     
-    mocker.patch("tempfile.TemporaryDirectory", return_value=MagicMock(__enter__=MagicMock(return_value="tmp")))
+    mocker.patch("tempfile.TemporaryDirectory", return_value=MagicMock(__enter__=MagicMock(return_value=str(temp_workspace))))
 
     # Force compression
     e2e_config.max_size_mb = 0.1
@@ -158,7 +158,7 @@ async def test_e2e_cancel_compress(e2e_router, e2e_config, mock_update, mock_con
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(45)
-async def test_e2e_cancel_upload(e2e_router, e2e_config, mock_update, mock_context, mocker, local_server):
+async def test_e2e_cancel_upload(e2e_router, e2e_config, mock_update, mock_context, temp_workspace, mocker, local_server):
     """Test cancellation during the upload phase of multiple parts."""
     messages = []
     original_side_effect = mock_update.message.reply_text.side_effect
@@ -170,7 +170,7 @@ async def test_e2e_cancel_upload(e2e_router, e2e_config, mock_update, mock_conte
 
     mock_update.message.reply_text.side_effect = collecting_side_effect
     
-    mocker.patch("tempfile.TemporaryDirectory", return_value=MagicMock(__enter__=MagicMock(return_value="tmp")))
+    mocker.patch("tempfile.TemporaryDirectory", return_value=MagicMock(__enter__=MagicMock(return_value=str(temp_workspace))))
 
     # Force splitting
     e2e_config.max_size_mb = 0.01
