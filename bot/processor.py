@@ -269,6 +269,47 @@ class FFmpegProcessor:
                                            output_path=output_path, progress_callback=progress_callback,
                                            chat_id=chat_id, depth=depth+1)
 
+            # ── Diagnostic block: preserve input and emit debug info ──────────────────
+            # 1. Save the input file to a permanent debug location outside tmpdir
+            import shutil as _shutil
+            debug_dir = Path("/tmp/ytdlp_ffmpeg_debug")
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            debug_input = debug_dir / input_path.name
+            try:
+                _shutil.copy2(input_path, debug_input)
+            except Exception as _copy_err:
+                self._log.warning("ffmpeg debug: could not copy input file: %s", _copy_err)
+                debug_input = input_path  # fall back to original path for the command
+
+            # 2. Build the exact debug command referencing the preserved input path
+            debug_cmd = cmd.copy()
+            # Replace the input path argument (always follows -i) with the preserved path
+            try:
+                i_idx = debug_cmd.index("-i")
+                debug_cmd[i_idx + 1] = str(debug_input)
+            except ValueError:
+                pass  # -i not found, leave cmd as-is
+            # Replace the output path (last element) with a debug output path
+            debug_output = debug_dir / f"{input_path.stem}_debug_out.mp4"
+            debug_cmd[-1] = str(debug_output)
+
+            debug_cmd_str = " ".join(debug_cmd)
+
+            # 3. Emit all diagnostic lines at WARNING so they appear at LOG_LEVEL=INFO
+            self._log.warning(
+                "ffmpeg exited %d. Full output_history follows:\n%s",
+                proc.returncode,
+                "".join(output_history) if output_history else "(no output captured)",
+            )
+            self._log.warning(
+                "ffmpeg debug: input preserved at: %s", debug_input
+            )
+            self._log.warning(
+                "ffmpeg debug: run this command inside the container to reproduce:\n%s",
+                debug_cmd_str,
+            )
+            # ── End diagnostic block ──────────────────────────────────────────────────
+
             tail = "".join(output_history)[-500:] if output_history else "Unknown error"
             return False, None, f"ffmpeg exited {proc.returncode}: {tail}"
 
