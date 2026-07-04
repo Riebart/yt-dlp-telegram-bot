@@ -7,6 +7,7 @@ import time
 import json
 import threading
 import queue
+import shlex
 from pathlib import Path
 from bot import state
 from bot.config import Config
@@ -145,10 +146,15 @@ class FFmpegProcessor:
             cmd.extend(["-c:a", "copy"])
 
         cmd.append(str(out))
-        self._log.debug("ffmpeg cmd: %s", " ".join(cmd))
+        self._log.debug("ffmpeg cmd: %s", shlex.join(cmd))
 
         t0 = time.monotonic()
-        last_callback_time = 0.0
+
+        # Check cancellation before launch
+        if chat_id and chat_id in state.CANCELLATIONS:
+            self._log.info("[%s] Cancellation detected before compression for chat %d.", input_path.name, chat_id)
+            return False, None, "Process was cancelled by user."
+
         try:
             popen_kwargs = {
                 "stdout": subprocess.PIPE,
@@ -166,96 +172,60 @@ class FFmpegProcessor:
         except Exception as exc:
             return False, None, f"Failed to launch ffmpeg: {exc}"
 
-        try:
-            progress: dict[str, str] = {}
-
-            # Use a queue and a thread to read stdout without blocking the main loop
-            out_queue = queue.Queue()
-            def reader():
-                try:
-                    # Use readline() instead of 'for line in proc.stdout' to avoid some Windows hang scenarios
-                    while True:
-                        line = proc.stdout.readline()
-                        if not line:
-                            break
-                        out_queue.put(line)
-                except Exception:
-                    pass
-                finally:
-                    out_queue.put(None)
-
-            reader_thread = threading.Thread(target=reader, daemon=True)
-            reader_thread.start()
-
-            # Buffer for error reporting (last 500 chars)
-            output_history = []
-
-            max_duration = 1200
-            start_time = time.monotonic()
-
-            while True:
-                # Use poll() instead of wait(timeout=0.1) to avoid potential Windows-specific blocking
-                if proc.poll() is not None:
-                    break
-
-                # Check overall timeout
-                if time.monotonic() - start_time > max_duration:
-                    self._log.error("[%s] Hard timeout reached (5m). Terminating process %d.", input_path.name, proc.pid)
-                    terminate_process_group(proc.pid)
-                    if proc.stdout: proc.stdout.close()
-                    return False, None, "Operation timed out."
-
-                # Check cancellation
+        # Cancellation watcher — kills the process if the user cancels during encode
+        _cancelled = threading.Event()
+        def _cancellation_watcher():
+            while not _cancelled.is_set():
                 if chat_id and chat_id in state.CANCELLATIONS:
                     self._log.info("[%s] Cancellation detected during compression for chat %d. Terminating process %d.",
                                    input_path.name, chat_id, proc.pid)
                     terminate_process_group(proc.pid)
-                    if proc.stdout: proc.stdout.close()
-                    try:
-                        proc.wait(timeout=5)
-                        self._log.info("[%s] Process %d terminated successfully after cancellation.", input_path.name, proc.pid)
-                    except subprocess.TimeoutExpired:
-                        self._log.warning("[%s] Process %d did not terminate gracefully after 5s.", input_path.name, proc.pid)
-                    return False, None, "Process was cancelled by user."
+                    return
+                _cancelled.wait(timeout=3)
 
-                # Drain queue and process lines
-                try:
-                    while True:
-                        line = out_queue.get_nowait()
-                        if line is None: break
+        watcher = None
+        if chat_id:
+            watcher = threading.Thread(target=_cancellation_watcher, daemon=True)
+            watcher.start()
 
-                        # Store in history for error reporting
-                        output_history.append(line)
-                        if len("".join(output_history)) > 2000:
-                            output_history.pop(0)
-
-                        line_stripped = line.strip()
-                        if "=" in line_stripped:
-                            k, _, v = line_stripped.partition("=")
-                            progress[k.strip()] = v.strip()
-                        if line_stripped.startswith("progress="):
-                            try:
-                                out_us = int(progress.get("out_time_us", 0))
-                                pct = min(out_us / (duration * 1_000_000) * 100, 100.0)
-                                size_mib = int(progress.get("total_size", 0)) / 1_048_576
-                                speed = progress.get("speed", "?")
-                                self._log.info("  %5.1f%%  written=%.2f MiB  speed=%s",
-                                               pct, size_mib, speed)
-
-                                now = time.monotonic()
-                                if progress_callback and (now - last_callback_time >= 5.0):
-                                    progress_callback(pct, size_mib, speed)
-                                    last_callback_time = now
-                            except: pass
-                            progress = {}
-                except queue.Empty:
-                    pass
-
-                time.sleep(0.1)
-
+        output_text = ""
+        max_duration = 1200
+        try:
+            output_text, _ = proc.communicate(timeout=max_duration)
+        except subprocess.TimeoutExpired:
+            self._log.error("[%s] Hard timeout reached (%ds). Terminating process %d.", input_path.name, max_duration, proc.pid)
+            terminate_process_group(proc.pid)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._log.warning("[%s] Process %d did not terminate gracefully after 5s.", input_path.name, proc.pid)
+            return False, None, "Operation timed out."
         finally:
+            if watcher:
+                _cancelled.set()
+                watcher.join(timeout=2)
             if chat_id:
                 untrack_process(chat_id, proc)
+
+        # Parse progress from captured output
+        output_lines = output_text.splitlines()
+        progress: dict[str, str] = {}
+        for line in output_lines:
+            line_stripped = line.strip()
+            if "=" in line_stripped:
+                k, _, v = line_stripped.partition("=")
+                progress[k.strip()] = v.strip()
+            if line_stripped.startswith("progress="):
+                try:
+                    out_us = int(progress.get("out_time_us", 0))
+                    pct = min(out_us / (duration * 1_000_000) * 100, 100.0)
+                    size_mib = int(progress.get("total_size", 0)) / 1_048_576
+                    speed = progress.get("speed", "?")
+                    self._log.info("  %5.1f%%  written=%.2f MiB  speed=%s",
+                                   pct, size_mib, speed)
+                except:
+                    pass
+                progress = {}
 
         elapsed = time.monotonic() - t0
 
@@ -293,13 +263,13 @@ class FFmpegProcessor:
             debug_output = debug_dir / f"{input_path.stem}_debug_out.mp4"
             debug_cmd[-1] = str(debug_output)
 
-            debug_cmd_str = " ".join(debug_cmd)
+            debug_cmd_str = shlex.join(debug_cmd)
 
             # 3. Emit all diagnostic lines at WARNING so they appear at LOG_LEVEL=INFO
             self._log.warning(
-                "ffmpeg exited %d. Full output_history follows:\n%s",
+                "ffmpeg exited %d. Full output follows:\n%s",
                 proc.returncode,
-                "".join(output_history) if output_history else "(no output captured)",
+                output_text if output_text else "(no output captured)",
             )
             self._log.warning(
                 "ffmpeg debug: input preserved at: %s", debug_input
@@ -310,7 +280,7 @@ class FFmpegProcessor:
             )
             # ── End diagnostic block ──────────────────────────────────────────────────
 
-            tail = "".join(output_history)[-500:] if output_history else "Unknown error"
+            tail = output_text[-500:] if output_text else "Unknown error"
             return False, None, f"ffmpeg exited {proc.returncode}: {tail}"
 
         return True, out, ""
