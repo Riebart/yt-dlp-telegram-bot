@@ -225,7 +225,7 @@ class DownloadIntentHandler(BaseIntentHandler):
 
                         ok, compressed, err = await asyncio.get_event_loop().run_in_executor(
                             None, self._ffmpeg.compress_to_size, video_path,
-                            target_kbps * 1000, self._cfg.audio_bps, job_id, ffmpeg_progress, chat_id
+                            target_kbps * 1000, self._cfg.audio_bps, None, ffmpeg_progress, chat_id
                         )
                         if ok:
                             video_path = compressed
