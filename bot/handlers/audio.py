@@ -35,7 +35,7 @@ class AudioIntentHandler(BaseIntentHandler):
         self._log        = log
         self._report_handler = report_handler
 
-    async def handle(self, message, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+    async def handle(self, message, context: ContextTypes.DEFAULT_TYPE, text: str, override_action: str | None = None) -> None:
         import re
         URL_RE = re.compile(r'''https?://[^\s<>"'{}|\^`\[\]]+''')
         urls = URL_RE.findall(text)
@@ -50,9 +50,7 @@ class AudioIntentHandler(BaseIntentHandler):
 
         status_msg = await message.reply_text(f"🔍 Pre-flight check (audio): `{url}`...", parse_mode="Markdown")
 
-        is_from_report = hasattr(message, "edit_text") and not hasattr(message, "reply_to_message")
-
-        if not is_from_report:
+        if override_action is None:
             if not await self.run_preflight_check(url, status_msg, self._downloader, self._report_handler, duration_threshold_min=30):
                 return
 
