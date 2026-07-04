@@ -132,7 +132,7 @@ class FFmpegProcessor:
             "-maxrate", str(int(target_video_bps * 1.5)),
             "-bufsize", str(target_video_bps * 2),
             "-pix_fmt", "nv12" if use_qsv else "yuv420p",
-            "-vf", "scale='if(gt(iw,ih),min(1280,iw),-2)':'if(gt(iw,ih),-2,min(1280,ih))'",
+            "-vf", "scale=w=min(1280\\,iw):h=min(1280\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2",
             "-movflags", "+faststart",
             "-progress", "pipe:1",
             "-stats_period", "1",
