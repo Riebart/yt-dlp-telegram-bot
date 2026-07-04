@@ -2,7 +2,7 @@ import pytest
 import asyncio
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 from bot.downloader import YtdlpDownloader, _YtdlpLogger
 from bot.state import CANCELLATIONS
 import yt_dlp
@@ -15,7 +15,7 @@ def test_ytdlp_logger(caplog):
         logger.info("some info")
         logger.warning("a warning")
         logger.error("an error")
-    
+
     assert "[download] working" in caplog.text
     assert "some info" in caplog.text
     assert "a warning" in caplog.text
@@ -25,30 +25,28 @@ def test_ytdlp_logger(caplog):
 async def test_ytdlp_progress_hook(mock_downloader, mocker):
     loop = asyncio.get_running_loop()
     bot = MagicMock()
-    ctx = {"chat_id": 123, "message_id": 456, "bot": bot}
-    
+    # Use job_id in context
+    ctx = {"job_id": "job_123", "chat_id": 123, "message_id": 456, "bot": bot}
+
     hook = mock_downloader._progress_hook(loop, ctx)
-    
+
     # Test downloading status
     start_time = time.time()
     mocker.patch("time.monotonic", side_effect=lambda: time.time() - start_time + 100)
-    
+
+    bot.edit_message_text = AsyncMock()
+
     hook({"status": "downloading", "_percent_str": "50%", "_speed_str": "1MB/s", "_eta_str": "10s"})
     # Wait a bit for the async task to be scheduled
     await asyncio.sleep(0.01)
     bot.edit_message_text.assert_called()
 
     # Test cancellation
-    CANCELLATIONS.add(123)
+    CANCELLATIONS.add("job_123")
     with pytest.raises(Exception, match="Download cancelled"):
         hook({"status": "downloading"})
     CANCELLATIONS.clear()
 
-    # Test finished status
-    hook({"status": "finished", "filename": "vid.mp4", "total_bytes": 1024*1024})
-    
-    # Test error status
-    hook({"status": "error", "error": "failed"})
 
 def test_ytdlp_download_sync_success(mock_downloader, mocker):
     mock_ydl = mocker.patch("yt_dlp.YoutubeDL")

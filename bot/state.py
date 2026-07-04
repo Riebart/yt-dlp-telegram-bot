@@ -10,12 +10,16 @@ log = logging.getLogger("bot.state")
 # Format: { u_id: {"url": str, "time": float} }
 URL_CACHE: dict[str, dict[str, Any]] = {}
 
-# Map of chat_id -> set of active subprocesses
-# Format: { chat_id: {Process, ...} }
-ACTIVE_PROCESSES: dict[int, set] = {}
+# Map of job_id -> set of active subprocesses
+# Format: { job_id: {Process, ...} }
+ACTIVE_PROCESSES: dict[str, set] = {}
 
-# Set of chat_ids currently requesting cancellation
-CANCELLATIONS: set[int] = set()
+# Set of job_ids currently requesting cancellation
+CANCELLATIONS: set[str] = set()
+
+# Map of chat_id -> set of active job_ids
+# Format: { chat_id: {job_id, ...} }
+USER_JOBS: dict[int, set[str]] = {}
 
 async def cleanup_cache_task():
     """Periodically remove expired entries from URL_CACHE."""

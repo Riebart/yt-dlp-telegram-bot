@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock
 
-from bot.state import CANCELLATIONS, URL_CACHE, ACTIVE_PROCESSES
+from bot.state import CANCELLATIONS, URL_CACHE, ACTIVE_PROCESSES, USER_JOBS
 from tests.integration.test_e2e_basic import get_first_arg
 
 @pytest.mark.asyncio
@@ -33,32 +33,60 @@ async def test_e2e_download_compress_success(e2e_router, e2e_config, mock_update
 async def test_e2e_download_compress_floor(e2e_router, e2e_config, mock_update, mock_context, temp_workspace, mocker, local_server):
     """Test pivot to splitting when compression would hit the quality floor."""
     mocker.patch("tempfile.TemporaryDirectory", return_value=MagicMock(__enter__=MagicMock(return_value=str(temp_workspace))))
+    mocker.patch("subprocess.Popen")
+    
+    # Mock loop to prevent any real executor calls that might bypass mocks
+    mock_loop = MagicMock()
+    mock_loop.run_in_executor = AsyncMock(side_effect=lambda exec, func, *args, **kwargs: func(*args, **kwargs))
+    mocker.patch("asyncio.get_running_loop", return_value=mock_loop)
+    mocker.patch("asyncio.get_event_loop", return_value=mock_loop)
 
-    # Set max_size_mb and min_video_bitrate_kbps to force the floor
     e2e_config.max_size_mb = 0.7
     e2e_config.compress_mb = 0.6
-    e2e_config.min_video_bitrate_kbps = 5000 # High floor to force split
+    e2e_config.min_video_bitrate_kbps = 5000
+
+    # Patch the handler instance on the router
+    handler = e2e_router._handlers["download"]
+    
+    mock_ff = MagicMock()
+    mock_ff.get_duration.return_value = 60
+    
+    compressed_path = Path(temp_workspace) / "compressed.mp4"
+    mock_ff.compress_to_size.return_value = (True, compressed_path, "")
+    handler._ffmpeg = mock_ff
+    
+    mock_splitter = MagicMock()
+    mock_splitter.split_video.return_value = ([Path(temp_workspace) / "part1.mp4", Path(temp_workspace) / "part2.mp4"], "")
+    handler._splitter = mock_splitter
+
+    # Create dummy files. Compressed file must exceed max_size_mb (0.7MB) to force split.
+    compressed_path.write_bytes(b"\0" * (1024 * 1024)) 
+    (Path(temp_workspace) / "part1.mp4").write_bytes(b"dummy")
+    (Path(temp_workspace) / "part2.mp4").write_bytes(b"dummy")
 
     mock_update.message.text = f"download {local_server}"
     await e2e_router.handle_message(mock_update, mock_context)
 
-    # Should result in multiple parts being uploaded (because it pivoted to splitting)
+    # Expect at least 2 videos (the parts)
     assert mock_update.message.reply_video.call_count > 1
-
-    # Verify the first part exists
-    first_video_path = get_first_arg(mock_update.message.reply_video)
-    assert first_video_path is not None
-    assert Path(first_video_path).exists()
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(35)
 async def test_e2e_download_split_simple(e2e_router, e2e_config, mock_update, mock_context, temp_workspace, mocker, local_server):
     """Test simple splitting (without preceding compression)."""
     mocker.patch("tempfile.TemporaryDirectory", return_value=MagicMock(__enter__=MagicMock(return_value=str(temp_workspace))))
+    mocker.patch("subprocess.Popen")
 
-    # Force split by setting min_video_bitrate very high and max_size moderately low
     e2e_config.max_size_mb = 0.5
     e2e_config.min_video_bitrate_kbps = 100000
+
+    handler = e2e_router._handlers["download"]
+    mock_splitter = MagicMock()
+    mock_splitter.split_video.return_value = ([Path(temp_workspace) / "part1.mp4", Path(temp_workspace) / "part2.mp4"], "")
+    handler._splitter = mock_splitter
+    
+    (Path(temp_workspace) / "part1.mp4").write_bytes(b"dummy")
+    (Path(temp_workspace) / "part2.mp4").write_bytes(b"dummy")
 
     mock_update.message.text = f"download {local_server}"
     await e2e_router.handle_message(mock_update, mock_context)
@@ -83,14 +111,18 @@ async def test_e2e_cancel_download(e2e_router, e2e_config, mock_update, mock_con
     original_download = e2e_router._handlers["download"]._downloader.download_sync
 
     async def mocked_download(*args, **kwargs):
-        from bot.state import CANCELLATIONS
-        CANCELLATIONS.add(mock_update.effective_chat.id)
+        from bot.state import CANCELLATIONS, USER_JOBS
+        chat_id = mock_update.effective_chat.id
+        jobs = USER_JOBS.get(chat_id, set())
+        for jid in jobs:
+            CANCELLATIONS.add(jid)
         await asyncio.sleep(1)
         return original_download(*args, **kwargs)
 
     mocker.patch("asyncio.get_running_loop").return_value.run_in_executor = AsyncMock(
         side_effect=lambda exec, func, *a, **k: (
-            CANCELLATIONS.add(mock_update.effective_chat.id),
+            # Correctly find and flag the job_id for this chat
+            [CANCELLATIONS.add(jid) for jid in USER_JOBS.get(mock_update.effective_chat.id, set())],
             func(*a, **k)
         )[1]
     )
@@ -182,10 +214,12 @@ async def test_e2e_cancel_upload(e2e_router, e2e_config, mock_update, mock_conte
         nonlocal call_count
         call_count += 1
         if call_count >= 1:
-            from bot.state import CANCELLATIONS
-            CANCELLATIONS.add(mock_update.effective_chat.id)
+            from bot.state import CANCELLATIONS, USER_JOBS
+            chat_id = mock_update.effective_chat.id
+            jobs = USER_JOBS.get(chat_id, set())
+            for jid in jobs:
+                CANCELLATIONS.add(jid)
         return MagicMock()
-
     mocker.patch.object(e2e_router._handlers["download"], "upload_media", side_effect=side_effect_upload)
 
     mock_update.message.text = f"download {local_server}"

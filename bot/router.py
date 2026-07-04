@@ -97,34 +97,37 @@ class BotRouter:
     async def handle_cancel(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Terminate all active processes for this chat."""
+        """Terminate all active jobs for this chat."""
         message = update.message
         if message is None: return
         chat_id = message.chat_id
 
-        self._log.info("Cancellation request received for chat %d", chat_id)
+        self._log.info("Global cancellation request received for chat %d", chat_id)
 
-        # Flag for yt-dlp to stop
-        CANCELLATIONS.add(chat_id)
-
-        # Kill any active subprocesses (ffmpeg/ffprobe)
-        procs = ACTIVE_PROCESSES.get(chat_id, set())
-        count = len(procs)
-        for proc in list(procs):
-            try:
-                self._log.debug("Attempting to kill process %d for chat %d", proc.pid, chat_id)
-                terminate_process_group(proc.pid)
-                self._log.info("Successfully sent kill signal to process %d", proc.pid)
-            except Exception as e:
-                self._log.error("Error killing process %d for chat %d: %s", proc.pid, chat_id, e)
-
-        # Clean up ACTIVE_PROCESSES state
-        ACTIVE_PROCESSES.pop(chat_id, None)
-
-        if count > 0 or chat_id in CANCELLATIONS:
-            await message.reply_text(f"🛑 Cancelled {count} active task(s).")
-        else:
+        from bot.state import USER_JOBS, CANCELLATIONS, ACTIVE_PROCESSES
+        
+        user_jobs = USER_JOBS.get(chat_id, set()).copy()
+        if not user_jobs:
             await message.reply_text("ℹ️ No active tasks to cancel.")
+            return
+
+        count = 0
+        for job_id in user_jobs:
+            # Flag for cancellation
+            CANCELLATIONS.add(job_id)
+            
+            # Kill processes for this job
+            procs = ACTIVE_PROCESSES.get(job_id, set())
+            for proc in list(procs):
+                try:
+                    terminate_process_group(proc.pid)
+                except Exception as e:
+                    self._log.error("Error killing process %d for job %s: %s", proc.pid, job_id, e)
+            
+            ACTIVE_PROCESSES.pop(job_id, None)
+            count += 1
+
+        await message.reply_text(f"🛑 Cancelled {count} active task(s).")
 
     async def handle_callback(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -154,8 +157,21 @@ class BotRouter:
         }
 
         if action == "cn":
+            job_id = u_id
+            from bot.state import CANCELLATIONS, ACTIVE_PROCESSES
+            
+            self._log.info("Targeted cancellation for job %s", job_id)
+            CANCELLATIONS.add(job_id)
+            
+            procs = ACTIVE_PROCESSES.get(job_id, set())
+            for proc in list(procs):
+                try:
+                    terminate_process_group(proc.pid)
+                except Exception as e:
+                    self._log.error("Error killing process %d for job %s: %s", proc.pid, job_id, e)
+            
+            ACTIVE_PROCESSES.pop(job_id, None)
             await query.edit_message_text("❌ Action cancelled.")
-            URL_CACHE.pop(u_id, None)
             return
 
         intent = intent_map.get(action)
@@ -164,7 +180,9 @@ class BotRouter:
         if handler:
             URL_CACHE.pop(u_id, None)
             # Flag that we are starting a fresh task
-            CANCELLATIONS.discard(chat_id)
+            # Use the global CANCELLATIONS set
+            from bot.state import CANCELLATIONS as global_cancellations
+            global_cancellations.discard(chat_id)
             await query.edit_message_text(f"✅ Selected: `{intent}`\nProcessing: `{url}`", parse_mode="Markdown")
             await handler.handle(query.message, context, url)
         else:

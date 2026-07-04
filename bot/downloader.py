@@ -43,23 +43,25 @@ class YtdlpDownloader:
         last = {"t": 0.0}
         log_ = self._log
 
+        job_id = None
+        chat_id = None
+        msg_id = None
+        bot = None
+
         if ctx:
             if isinstance(ctx, dict):
+                job_id = ctx.get("job_id")
                 chat_id = ctx.get("chat_id")
                 msg_id = ctx.get("message_id")
                 bot = ctx.get("bot")
                 if not bot and "bot" in ctx:
                     bot = ctx["bot"]
-            else:
-                chat_id = msg_id = bot = None
-        else:
-            chat_id = msg_id = bot = None
 
         def hook(d: dict) -> None:
             # We import CANCELLATIONS locally to avoid circular dependency 
             # since we are in the infrastructure layer.
             from bot import state
-            if chat_id and chat_id in state.CANCELLATIONS:
+            if job_id and job_id in state.CANCELLATIONS:
                 raise Exception("Download cancelled by user")
 
             status = d.get("status")

@@ -44,6 +44,9 @@ class DownloadIntentHandler(BaseIntentHandler):
 
     async def handle(self, message, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
         import re
+        import uuid
+        from bot.state import CANCELLATIONS, USER_JOBS
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         URL_RE = re.compile(r'''https?://[^\s<>"'{}|\^`\[\]]+''')
         urls = URL_RE.findall(text)
         if not urls:
@@ -54,32 +57,51 @@ class DownloadIntentHandler(BaseIntentHandler):
         url        = urls[0]
         message_id = message.message_id
         chat_id    = message.chat_id
+        
+        # Generate unique Job ID for this specific download task
+        job_id = f"job_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        
+        # Track this job for the user
+        if chat_id not in USER_JOBS:
+            USER_JOBS[chat_id] = set()
+        USER_JOBS[chat_id].add(job_id)
 
-        status_msg = await message.reply_text(f"🔍 Pre-flight check: `{url}`...", parse_mode="Markdown")
+        # Create a cancellation button for this specific job
+        cancel_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel", callback_data=f"cn:{job_id}")]
+        ])
 
-        is_from_report = hasattr(message, "edit_text") and not hasattr(message, "reply_to_message")
-
-        if not is_from_report:
-            if not await self.run_preflight_check(url, status_msg, self._downloader, self._report_handler):
-                return
-
-        if await check_for_cancellation(chat_id, status_msg, CANCELLATIONS):
-            return
-
-        await status_msg.edit_text(f"⬇️ Downloading…\n`{url}`\n(Send /cancel to stop)", parse_mode="Markdown")
+        status_msg = await message.reply_text(
+            f"🔍 Pre-flight check: `{url}`...", 
+            parse_mode="Markdown", 
+            reply_markup=cancel_keyboard
+        )
 
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_tpl = os.path.join(tmpdir, "%(title).100s.%(ext)s")
                 t0 = time.monotonic()
 
-                self._log.info("Starting yt-dlp  url=%s  tmpdir=%s", url, tmpdir)
+                self._log.info("Starting yt-dlp  job=%s  url=%s  tmpdir=%s", job_id, url, tmpdir)
                 await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
 
-                prog_ctx = {"chat_id": chat_id, "message_id": status_msg.message_id, "bot": context.bot}
+                prog_ctx = {"job_id": job_id, "chat_id": chat_id, "message_id": status_msg.message_id, "bot": context.bot}
+
+                # Pre-flight: Check if we should pivot to report before downloading
+                loop = asyncio.get_running_loop()
+                info_ok, info_err, info = await loop.run_in_executor(
+                    None, self._downloader.get_info_sync, url
+                )
+                
+                if info_ok and self._report_handler:
+                    size_bytes = info.get("filesize", 0)
+                    if size_bytes > self._cfg.max_size_mb * 1_048_576:
+                        self._log.info("File size %.2f MiB exceeds limit. Pivoting to report for job %s.", 
+                                       size_bytes / 1_048_576, job_id)
+                        await self._report_handler.send_report(message, context, url, info)
+                        return
 
                 try:
-                    loop = asyncio.get_running_loop()
                     success, err_msg, info = await asyncio.wait_for(
                         loop.run_in_executor(
                             None, self._downloader.download_sync, url, output_tpl, prog_ctx, loop
@@ -92,14 +114,14 @@ class DownloadIntentHandler(BaseIntentHandler):
                     return
                 except Exception as exc:
                     if "cancelled" in str(exc).lower():
-                        self._log.info("Download loop interrupted by cancellation for chat %d.", chat_id)
+                        self._log.info("Download loop interrupted by cancellation for job %s.", job_id)
                         await status_msg.edit_text("❌ Download cancelled.")
                         return
                     self._log.exception("Unexpected download error  url=%s", url)
                     await status_msg.edit_text(f"❌ Unexpected error: {exc}")
                     return
 
-                if await check_for_cancellation(chat_id, status_msg, CANCELLATIONS):
+                if await check_for_cancellation(job_id, status_msg, CANCELLATIONS):
                     return
 
                 elapsed_dl = time.monotonic() - t0
@@ -119,7 +141,7 @@ class DownloadIntentHandler(BaseIntentHandler):
 
                 size_bytes = video_path.stat().st_size
                 size_mib   = size_bytes / 1_048_576
-                self._log.info("Download complete  file=%s  size=%.2f MiB", video_path.name, size_mib)
+                self._log.info("Download complete  job=%s  file=%s  size=%.2f MiB", job_id, video_path.name, size_mib)
 
                 if self._cfg.save_dir:
                     dest = Path(self._cfg.save_dir) / video_path.name
@@ -135,6 +157,7 @@ class DownloadIntentHandler(BaseIntentHandler):
 
                 if size_bytes > self._cfg.max_size_mb * 1_048_576:
                     duration = self._ffmpeg.get_duration(video_path) or 0
+                    reason = "Falling back to split due to missing metadata."
                     if duration <= 0:
                         self._log.warning("Could not determine duration, falling back to split.")
                         action = "split"
@@ -145,8 +168,8 @@ class DownloadIntentHandler(BaseIntentHandler):
                         required_v_bps = int(video_bits / duration)
                         required_v_kbps = required_v_bps // 1000
 
-                        self._log.info("Processing decision: required_v_kbps=%d, min_v_kbps=%d",
-                                       required_v_kbps, self._cfg.min_video_bitrate_kbps)
+                        self._log.info("Processing decision for job %s: required_v_kbps=%d, min_v_kbps=%d",
+                                       job_id, required_v_kbps, self._cfg.min_video_bitrate_kbps)
 
                         if required_v_kbps >= self._cfg.min_video_bitrate_kbps:
                             action = "compress"
@@ -158,13 +181,19 @@ class DownloadIntentHandler(BaseIntentHandler):
                             reason = (f"Quality floor reached ({self._cfg.min_video_bitrate_kbps} kbps). "
                                       f"Will compress then split.")
 
-                    await status_msg.edit_text(f"⚠️ {size_mib:.1f} MiB exceeds limit.\n{reason}\n🔄 Processing…")
+                    await status_msg.edit_text(
+                        f"⚠️ {size_mib:.1f} MiB exceeds limit.\n{reason}\n🔄 Processing…", 
+                        reply_markup=cancel_keyboard
+                    )
 
                     if "compress" in action:
-                        if await check_for_cancellation(chat_id, status_msg, CANCELLATIONS):
+                        if await check_for_cancellation(job_id, status_msg, CANCELLATIONS):
                             return
 
-                        await status_msg.edit_text(f"🔄 Compressing to {target_kbps} kbps…")
+                        await status_msg.edit_text(
+                            f"🔄 Compressing to {target_kbps} kbps…", 
+                            reply_markup=cancel_keyboard
+                        )
 
                         loop = asyncio.get_running_loop()
                         def ffmpeg_progress(pct, size_mib, speed):
@@ -173,14 +202,15 @@ class DownloadIntentHandler(BaseIntentHandler):
                                     status_msg.edit_text(
                                         f"🔄 Compressing: {pct:.1f}% ({size_mib:.1f} MiB)\n"
                                         f"Speed: {speed} | Target: {target_kbps} kbps\n"
-                                        f"(Send /cancel to stop)"
+                                        f"(Send /cancel to stop)",
+                                        reply_markup=cancel_keyboard
                                     )
                                 )
                             loop.call_soon_threadsafe(update)
 
                         ok, compressed, err = await asyncio.get_event_loop().run_in_executor(
                             None, self._ffmpeg.compress_to_size, video_path,
-                            target_kbps * 1000, self._cfg.audio_bps, None, ffmpeg_progress, chat_id
+                            target_kbps * 1000, self._cfg.audio_bps, job_id, ffmpeg_progress, chat_id
                         )
                         if ok:
                             video_path = compressed
@@ -200,12 +230,15 @@ class DownloadIntentHandler(BaseIntentHandler):
                             action = "split"
 
                     if action == "split":
-                        if await check_for_cancellation(chat_id, status_msg, CANCELLATIONS):
+                        if await check_for_cancellation(job_id, status_msg, CANCELLATIONS):
                             return
 
-                        await status_msg.edit_text("🔄 Splitting into chunks…")
+                        await status_msg.edit_text(
+                            "🔄 Splitting into chunks…", 
+                            reply_markup=cancel_keyboard
+                        )
                         chunks, err = await asyncio.get_event_loop().run_in_executor(
-                            None, self._splitter.split_video, video_path, float(self._cfg.max_size_mb), chat_id
+                            None, self._splitter.split_video, video_path, float(self._cfg.max_size_mb), job_id
                         )
                         if chunks:
                             upload_list = chunks
@@ -219,14 +252,17 @@ class DownloadIntentHandler(BaseIntentHandler):
 
                 total_chunks = len(upload_list)
                 for i, up_path in enumerate(upload_list):
-                    if chat_id in CANCELLATIONS:
+                    if job_id in CANCELLATIONS:
                         await status_msg.edit_text("❌ Upload cancelled.")
                         return
 
                     chunk_info = f" (part {i+1}/{total_chunks})" if total_chunks > 1 else ""
                     up_mib = up_path.stat().st_size / 1_048_576
 
-                    await status_msg.edit_text(f"📤 Uploading{chunk_info} — {up_mib:.1f} MiB…")
+                    await status_msg.edit_text(
+                        f"📤 Uploading{chunk_info} — {up_mib:.1f} MiB…", 
+                        reply_markup=cancel_keyboard
+                    )
                     
                     escaped_title = markdown_escape(video_path.stem)
                     caption = f"✅ {escaped_title}{chunk_info}"
@@ -241,4 +277,4 @@ class DownloadIntentHandler(BaseIntentHandler):
 
                 await status_msg.delete()
         finally:
-            CANCELLATIONS.discard(chat_id)
+            USER_JOBS[chat_id].discard(job_id)

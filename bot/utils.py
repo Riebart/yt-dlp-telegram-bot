@@ -15,7 +15,7 @@ def markdown_escape(text: str) -> str:
     """Escape characters that have special meaning in Telegram MarkdownV2."""
     # Note: This is a simplified escape list.
     for char in r"_*[]()~`>#+-=|{}.!":
-        text = text.replace(char, f"\{char}")
+        text = text.replace(char, rf"\{char}")
     return text
 
 def terminate_process_group(pid: int) -> None:
@@ -50,12 +50,12 @@ def get_primary_file(directory: Path, extension: str | None = None) -> Path | No
         log.error("Error finding primary file in %s: %s", directory, exc)
         return None
 
-async def check_for_cancellation(chat_id: int, status_msg: Any, cancellations_set: set) -> bool:
+async def check_for_cancellation(job_id: str, status_msg: Any, cancellations_set: set) -> bool:
     """
-    Check if a task has been cancelled. If so, update status message and return True.
+    Check if a job has been cancelled. If so, update status message and return True.
     """
-    if chat_id in cancellations_set:
-        log.info("Cancellation detected for chat %d. Aborting operation.", chat_id)
+    if job_id in cancellations_set:
+        log.info("Cancellation detected for job %s. Aborting operation.", job_id)
         try:
             await status_msg.edit_text("❌ Task cancelled.")
         except Exception as e:
@@ -63,22 +63,22 @@ async def check_for_cancellation(chat_id: int, status_msg: Any, cancellations_se
         return True
     return False
 
-def track_process(chat_id: int, proc, active_processes: Any = None):
+def track_process(job_id: str, proc, active_processes: Any = None):
     """Add a process to the active processes tracking map."""
     if active_processes is None:
         active_processes = ACTIVE_PROCESSES
-    if chat_id not in active_processes:
-        active_processes[chat_id] = set()
-    active_processes[chat_id].add(proc)
+    if job_id not in active_processes:
+        active_processes[job_id] = set()
+    active_processes[job_id].add(proc)
 
-def untrack_process(chat_id: int, proc, active_processes: Any = None):
+def untrack_process(job_id: str, proc, active_processes: Any = None):
     """Remove a process from the active processes tracking map."""
     if active_processes is None:
         active_processes = ACTIVE_PROCESSES
-    if chat_id in active_processes:
-        active_processes[chat_id].discard(proc)
-        if not active_processes[chat_id]:
-            del active_processes[chat_id]
+    if job_id in active_processes:
+        active_processes[job_id].discard(proc)
+        if not active_processes[job_id]:
+            del active_processes[job_id]
 
 async def error_handler(update: Any, context: Any) -> None:
     """Global error handler for the Telegram bot."""

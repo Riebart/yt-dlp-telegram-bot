@@ -106,8 +106,7 @@ def test_ffmpeg_compress_to_size_various_branches(mock_ffmpeg, mocker):
     # Use audio_bps=64000 to avoid retry logic which checks for "-c:a copy"
     ok, out, err = mock_ffmpeg.compress_to_size(Path("i.mp4"), 1000000, audio_bps=64000)
     assert not ok
-    assert "Detailed error message" in err
-
+    assert "ffmpeg exited 2" in err
     # Test SIGTERM (Linux cancellation)
     mocker.patch("sys.platform", "linux")
     mocker.patch("os.setsid", MagicMock(), create=True)

@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from bot.router import BotRouter
-from bot.state import CANCELLATIONS, ACTIVE_PROCESSES
+from bot.state import CANCELLATIONS, ACTIVE_PROCESSES, USER_JOBS
 from telegram import Update, Message, Chat
 
 @pytest.fixture
@@ -61,12 +61,15 @@ async def test_active_processes_cleaned_after_cancel(mock_router):
     ACTIVE_PROCESSES after terminating them.
     """
     ACTIVE_PROCESSES.clear()
+    USER_JOBS.clear()
     chat_id = 789
+    job_id = "test_job"
     
     # Simulate an active process
     mock_proc = MagicMock()
     mock_proc.pid = 1001
-    ACTIVE_PROCESSES[chat_id] = {mock_proc}
+    ACTIVE_PROCESSES[job_id] = {mock_proc}
+    USER_JOBS[chat_id] = {job_id}
     
     # Mock Update for /cancel
     update = MagicMock(spec=Update)
@@ -82,7 +85,5 @@ async def test_active_processes_cleaned_after_cancel(mock_router):
         # Verify termination was called
         mock_terminate.assert_called_once_with(mock_proc.pid)
         
-        # Verify the process is removed from state
-        # Currently this will fail as handle_cancel doesn't remove it
-        assert (chat_id not in ACTIVE_PROCESSES or len(ACTIVE_PROCESSES[chat_id]) == 0), \
-            "Processes were not removed from ACTIVE_PROCESSES after cancellation"
+        # Verify the job is removed from state
+        assert job_id not in ACTIVE_PROCESSES, "Job processes were not removed from ACTIVE_PROCESSES after cancellation"
