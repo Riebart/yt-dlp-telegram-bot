@@ -42,7 +42,7 @@ class DownloadIntentHandler(BaseIntentHandler):
         self._log        = log
         self._report_handler = report_handler
 
-    async def handle(self, message, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+    async def handle(self, message, context: ContextTypes.DEFAULT_TYPE, text: str, override_action: str | None = None) -> None:
         import re
         import uuid
         from bot.state import CANCELLATIONS, USER_JOBS
@@ -88,18 +88,20 @@ class DownloadIntentHandler(BaseIntentHandler):
                 prog_ctx = {"job_id": job_id, "chat_id": chat_id, "message_id": status_msg.message_id, "bot": context.bot}
 
                 # Pre-flight: Check if we should pivot to report before downloading
+                # Skip when called from a callback button (action already chosen)
                 loop = asyncio.get_running_loop()
-                info_ok, info_err, info = await loop.run_in_executor(
-                    None, self._downloader.get_info_sync, url
-                )
-                
-                if info_ok and self._report_handler:
-                    size_bytes = info.get("filesize", 0)
-                    if size_bytes > self._cfg.max_size_mb * 1_048_576:
-                        self._log.info("File size %.2f MiB exceeds limit. Pivoting to report for job %s.", 
-                                       size_bytes / 1_048_576, job_id)
-                        await self._report_handler.send_report(message, context, url, info)
-                        return
+                if override_action is None:
+                    info_ok, info_err, info = await loop.run_in_executor(
+                        None, self._downloader.get_info_sync, url
+                    )
+                    
+                    if info_ok and self._report_handler:
+                        size_bytes = info.get("filesize", 0)
+                        if size_bytes > self._cfg.max_size_mb * 1_048_576:
+                            self._log.info("File size %.2f MiB exceeds limit. Pivoting to report for job %s.", 
+                                           size_bytes / 1_048_576, job_id)
+                            await self._report_handler.send_report(status_msg, url)
+                            return
 
                 try:
                     success, err_msg, info = await asyncio.wait_for(
@@ -158,7 +160,20 @@ class DownloadIntentHandler(BaseIntentHandler):
                 if size_bytes > self._cfg.max_size_mb * 1_048_576:
                     duration = self._ffmpeg.get_duration(video_path) or 0
                     reason = "Falling back to split due to missing metadata."
-                    if duration <= 0:
+
+                    if override_action == "large_video_split":
+                        action = "split"
+                        reason = "Splitting into chunks (user requested)."
+                    elif override_action == "large_video_compress":
+                        action = "compress"
+                        target_kbps = self._cfg.min_video_bitrate_kbps
+                        if duration > 0:
+                            target_bits = self._cfg.compress_mb * 1024 * 1024 * 8
+                            audio_bits = self._cfg.audio_bps * duration
+                            video_bits = target_bits - audio_bits
+                            target_kbps = max(int(video_bits / duration / 1000), self._cfg.min_video_bitrate_kbps)
+                        reason = f"Compressing to {target_kbps} kbps (user requested)."
+                    elif duration <= 0:
                         self._log.warning("Could not determine duration, falling back to split.")
                         action = "split"
                     else:

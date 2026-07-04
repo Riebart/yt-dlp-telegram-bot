@@ -73,6 +73,18 @@ As new intents are added they will be listed here.
         self._cfg = cfg
         self._log = log
 
+    def _keyword_classify(self, text: str) -> str:
+        t = text.lower()
+        if re.search(r'\b(compress|shrink|make.{0,10}smaller|reduce.{0,10}size)\b', t):
+            return "large_video_compress"
+        if re.search(r'\b(split|chunk|part|divide)\b', t):
+            return "large_video_split"
+        if re.search(r'\b(audio|mp3|music|song|podcast|sound)\b', t):
+            return "audio"
+        if re.search(r'\b(stat|info|probe|size|duration|how big)\b', t):
+            return "report_size"
+        return "download"
+
     def classify_sync(self, text: str) -> tuple[str, str]:
         """
         Synchronous — call via run_in_executor.
@@ -116,8 +128,8 @@ As new intents are added they will be listed here.
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
-            self._log.warning("Timed out after %ds — defaulting to 'download'.", timeout)
-            return "download", ""
+            self._log.warning("Timed out after %ds — falling back to keyword classifier.", timeout)
+            return self._keyword_classify(text), ""
         except Exception as exc:
-            self._log.warning("Error (%s) — defaulting to 'download'.", exc)
-            return "download", ""
+            self._log.warning("Error (%s) — falling back to keyword classifier.", exc)
+            return self._keyword_classify(text), ""

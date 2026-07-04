@@ -184,6 +184,6 @@ class BotRouter:
             from bot.state import CANCELLATIONS as global_cancellations
             global_cancellations.discard(chat_id)
             await query.edit_message_text(f"✅ Selected: `{intent}`\nProcessing: `{url}`", parse_mode="Markdown")
-            await handler.handle(query.message, context, url)
+            await handler.handle(query.message, context, url, override_action=intent)
         else:
             await query.edit_message_text(f"❌ No handler for action: {action}")
