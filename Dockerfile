@@ -20,12 +20,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install yt-dlp from the official GitHub release binary so it tracks the
-# latest stable version (the apt/pip packages often lag behind).
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
-        -o /usr/local/bin/yt-dlp \
-    && chmod +x /usr/local/bin/yt-dlp
-
 WORKDIR /app
 
 # Install Python dependencies into a venv -- isolated from the system Python.
@@ -38,6 +32,12 @@ COPY main.py .
 COPY bot/ ./bot/
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
+
+# Install yt-dlp from the official GitHub release binary so it tracks the
+# latest stable version (the apt/pip packages often lag behind).
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+        -o /usr/local/bin/yt-dlp \
+    && chmod +x /usr/local/bin/yt-dlp
 
 # Drop privileges -- never run a long-lived bot as root.
 RUN useradd --no-create-home --shell /bin/false botuser \
